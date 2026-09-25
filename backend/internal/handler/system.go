@@ -159,12 +159,16 @@ func bindPage(c *gin.Context) dto.PageQuery {
 }
 
 func parseID(c *gin.Context) (uint, bool) {
-	raw, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || raw == 0 {
+	return parseRawID(c, c.Param("id"))
+}
+
+func parseRawID(c *gin.Context, raw string) (uint, bool) {
+	id, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || id == 0 {
 		util.Fail(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
 		return 0, false
 	}
-	return uint(raw), true
+	return uint(id), true
 }
 
 func actorFromContext(c *gin.Context) string {

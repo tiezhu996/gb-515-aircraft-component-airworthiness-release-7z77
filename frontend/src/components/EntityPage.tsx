@@ -1,5 +1,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { EntityConfig, DomainRecord } from '../types/domain';
 import type { EntityStore } from '../stores/factory';
 import { nextStatus, formatDate } from '../utils/format';
@@ -10,14 +11,25 @@ import { ConfirmDialog } from './common/ConfirmDialog';
 import { UiButton } from './common/UiButton';
 import { CertificatePanel } from './common/CertificatePanel';
 import { useAuth } from '../hooks/useAuth';
+import type { AssemblyBlockedPart } from '../types/domain';
 
-export function EntityPage({ config, useStore, certificateRecords = [] }: { config: EntityConfig; useStore: EntityStore; certificateRecords?: DomainRecord[] }) {
-	const { items, meta, loading, error, load, createRecord, transition } = useStore();
+export function EntityPage({ config, useStore, certificateRecords = [], renderDetail, detailLabel = '查看详情' }: {
+	config: EntityConfig; useStore: EntityStore; certificateRecords?: DomainRecord[];
+	renderDetail?: (item: DomainRecord, close: () => void) => ReactNode;
+	detailLabel?: string;
+}) {
+	const { items, meta, loading, error, lastBlocked, load, createRecord, transition, clearBlocked } = useStore();
 	const { session, hasRole } = useAuth();
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [pending, setPending] = useState<{ item: DomainRecord; status: string } | null>(null);
+  const [selected, setSelected] = useState<DomainRecord | null>(null);
   useEffect(() => { void load(config.path); }, [config.path, load]);
+  useEffect(() => { setSelected((current) => {
+		if (!current) return current;
+		const latest = items.find((item) => item.id === current.id);
+		return latest || current;
+	}); }, [items]);
   const highRisk = useMemo(() => items.filter((item) => ['high', 'critical'].includes(item.riskLevel)).length, [items]);
   const createDemo = async () => {
     const now = Date.now();
@@ -39,11 +51,32 @@ export function EntityPage({ config, useStore, certificateRecords = [] }: { conf
 		{certificateRecords.length > 0 && <section className="certificate-section"><header><h2>证书版本证据</h2><span>操作者与请求 ID 可追溯</span></header><CertificatePanel records={certificateRecords} /></section>}
 		<section className="toolbar"><input aria-label="搜索" placeholder={`搜索${config.label}编码或名称`} value={search} onChange={(event) => setSearch(event.target.value)} /><UiButton onClick={() => void load(config.path, search)}>查询</UiButton><button className="link-button" onClick={() => { setSearch(''); void load(config.path); }}>重置</button></section>
     {error && <div className="alert" role="alert">{error}</div>}
+    {lastBlocked?.blockedParts?.length ? <BlockedReleaseNotice blocked={lastBlocked.blockedParts} onClose={clearBlocked} /> : null}
     <section className="table-shell" aria-busy={loading}><table><thead><tr><th>编码</th><th>名称</th><th>状态</th><th>风险</th><th>责任人</th><th>指标</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
-			{items.map((item) => { const next = nextStatus(item.status, config.primaryTransitions); return <tr key={item.id}><td><strong>{item.code}</strong></td><td>{item.name}<small>{item.facility}</small></td><td>{usePartBadge ? <PartStatusBadge status={item.status}/> : <StatusBadge status={item.status}/>}</td><td>{item.riskLevel}</td><td>{item.owner}</td><td>{item.metricValue} {item.metricUnit}</td><td>{formatDate(item.updatedAt)}</td><td>{next && canAdvance(item, next) ? <button className="table-action" onClick={() => setPending({ item, status: next })}>推进至 {next}</button> : next && requiresReviewer(item, next) && role === 'operator' ? <span className="muted">等待复核员</span> : next && !canOperate ? <span className="muted">只读</span> : <span className="muted">流程结束</span>}</td></tr>; })}
+			{items.map((item) => { const next = nextStatus(item.status, config.primaryTransitions); return <tr key={item.id} className={selected?.id === item.id ? 'row-selected' : ''}><td><strong>{item.code}</strong></td><td>{item.name}<small>{item.facility}</small></td><td>{usePartBadge ? <PartStatusBadge status={item.status}/> : <StatusBadge status={item.status}/>}</td><td>{item.riskLevel}</td><td>{item.owner}</td><td>{item.metricValue} {item.metricUnit}</td><td>{formatDate(item.updatedAt)}</td><td><span className="row-actions">{next && canAdvance(item, next) ? <button className="table-action" onClick={() => setPending({ item, status: next })}>推进至 {next}</button> : next && requiresReviewer(item, next) && role === 'operator' ? <span className="muted">等待复核员</span> : next && !canOperate ? <span className="muted">只读</span> : <span className="muted">流程结束</span>}{renderDetail && <button className="link-button" onClick={() => setSelected(item)}>{detailLabel}</button>}</span></td></tr>; })}
       {!items.length && !loading && <tr><td colSpan={8} className="empty">暂无记录</td></tr>}
     </tbody></table>{loading && <div className="loading">正在同步业务数据…</div>}</section>
+		{selected && renderDetail && <section className="detail-shell">
+			<header className="detail-header"><div><p className="eyebrow">{config.label}详情</p><h2>{selected.code} · {selected.name}</h2></div><button className="link-button" onClick={() => setSelected(null)}>关闭详情</button></header>
+			{renderDetail(selected, () => setSelected(null))}
+		</section>}
 		<ConfirmDialog open={showCreate} title={`新增${config.label}`} onCancel={() => setShowCreate(false)} onConfirm={() => void createDemo().catch(() => undefined)}><p>将创建一条包含完整责任人、风险和证据信息的演示记录。</p></ConfirmDialog>
 		<ConfirmDialog open={Boolean(pending)} title="确认状态迁移" onCancel={() => setPending(null)} onConfirm={() => { if (pending) void transition(config.path, pending.item, pending.status).then(() => setPending(null)).catch(() => undefined); }}><p>状态迁移会写入不可覆盖的版本与审计日志。</p><strong>{pending?.item.status} → {pending?.status}</strong></ConfirmDialog>
 	</main>;
+}
+
+// BlockedReleaseNotice 显示批准放行时被装配核对拦下的子件编号；授权本身
+// 保持在待复核，没有产生新版本。
+function BlockedReleaseNotice({ blocked, onClose }: { blocked: AssemblyBlockedPart[]; onClose: () => void }) {
+	return <section className="blocked-notice" role="alert">
+		<header><strong>授权留在待复核：下层部件未通过逐级核对</strong><button className="link-button" onClick={onClose}>知道了</button></header>
+		<p>以下 {blocked.length} 个子件暂停、退役或尚未放行，处理后再由复核员批准。</p>
+		<ul className="blocked-list">
+			{blocked.map((item) => <li key={`${item.level}-${item.id}`}>
+				<strong>{item.code}</strong> · {item.name} · L{item.level}
+				<PartStatusBadge status={item.status} />
+				<em>{item.reason}</em>
+			</li>)}
+		</ul>
+	</section>;
 }

@@ -33,10 +33,14 @@ docker compose down -v --remove-orphans
 
 | 业务模块 | 后端实体 | API 前缀 | 状态流 |
 |---|---|---|---|
-| 航空部件 | `AircraftPart` | `/api/parts` | received, inspection, hold, released, retired |
+| 航空部件 | `AircraftPart` / `PartAssembly` | `/api/parts`、`/api/part-assembly` | received, inspection, hold, released, retired |
 | 检查任务 | `InspectionTask` | `/api/inspections` | planned, running, passed, failed |
 | 证书记录 | `CertificateRecord` | `/api/certificates` | draft, valid, expired, revoked |
 | 放行授权 | `ReleaseAuthorization` | `/api/authorizations` | draft, review, approved, restricted, revoked |
+
+- 部件之间可登记装配关系：一个组件挂多个子件，同一子件不会同时挂在两个组件下（数据库唯一约束保证），登记时沿祖先链挡住绕回自己的环。
+- 复核员批准组件放行前顺着装配关系逐级核对：任一下层部件暂停(hold)、退役(retired)或未放行，授权留在 `review`、不产生新版本，并在 409 响应 `blockedParts` 中列出卡住编号，同时写 `release-blocked` 审计。
+- 部件页“装配清单”面板展示上级组件、直接子件、拆除/登记入口和逐级核对结果；放行授权页“装配复核”面板可在草稿阶段关联组件并预览核对结果。
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC，数据库角色、Gin middleware、React 路由守卫和按钮权限一致。
 - 放行必须经过 `draft -> review -> approved/restricted`，提交者与复核者必须是不同账号，operator 无法自批。

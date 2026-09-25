@@ -58,7 +58,7 @@ func TestCertificateVersionChainRequiresIndependentReviewer(t *testing.T) {
 
 func TestAuthorizationVersionChainEnforcesDualControl(t *testing.T) {
 	db := newVersionTestDB(t)
-	service := NewReleaseAuthorizationService(repository.NewReleaseAuthorizationRepository(db), nil)
+	service := NewReleaseAuthorizationService(repository.NewReleaseAuthorizationRepository(db), nil, nil)
 	ctx := context.Background()
 
 	created, err := service.Create(ctx, authorizationInput("AUTH-TEST-01"), "operator", "auth-create-1")

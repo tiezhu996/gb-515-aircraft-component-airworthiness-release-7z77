@@ -17,6 +17,9 @@ type CreateReleaseAuthorization struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	// AircraftPartID optionally binds the authorization to the 组件 whose
+	// 装配子件 must all be released before approval.
+	AircraftPartID *uint `json:"aircraftPartId"`
 }
 
 type UpdateReleaseAuthorization struct {
@@ -32,4 +35,5 @@ type UpdateReleaseAuthorization struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	AircraftPartID  *uint     `json:"aircraftPartId"`
 }

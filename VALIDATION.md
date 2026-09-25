@@ -2,6 +2,19 @@
 
 验证日期：2026-08-22（Asia/Shanghai）
 
+## 部件装配关系与逐级核对（2026-09-25 追加）
+
+在 SQLite 开发模式（`DATABASE_DRIVER=sqlite`、`REDIS_ADDR=''`）下实际验证：
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`、前端 `npm run typecheck` / `npm run build` 全部通过；新增装配服务测试覆盖自挂自、重复登记、第二个父件、多层绕回、逐级核对和批准拦截。
+- 空库种子自动建立 AP-004（组件）→ AP-005/006/007 子件与 AP-005 → AP-008 孙件；RA-002 关联 AP-004。
+- `GET /api/part-assembly/4` 返回装配清单与核对结果：`ready=false, checked=4`，卡住编号 AP-006(hold/暂停 L1)、AP-007(retired/退役 L1)、AP-008(inspection/未放行 L2)。
+- 登记接口对自挂自、重复关系、同一子件挂第二父件、绕回祖先均返回 HTTP 409 `assembly_conflict`；viewer 登记返回 403。
+- reviewer 批准 RA-002（approved 与 restricted 两种路径）均返回 HTTP 409 `assembly_release_blocked`，响应体 `blockedParts` 列出三个编号；授权保持 `review`、版本仍为 1、版本快照不增加，审计写入 `release-blocked`。
+- 将 AP-006/AP-008 推进到 released、拆除 AP-007 后，`GET /api/part-assembly/4` 变为 `ready=true, checked=3`；reviewer 再次批准成功，RA-002 变为 approved v2。
+- 草稿授权 PUT 绑定/解绑 `aircraftPartId` 正常；绑定不存在的部件返回 404。
+- 登记与拆除装配关系均写审计（`register` / `remove`，含操作者与部件编号）。
+
 ## 代码质量
 
 以下命令均实际执行成功：
