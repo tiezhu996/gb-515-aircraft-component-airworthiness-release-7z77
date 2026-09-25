@@ -46,6 +46,33 @@ curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/session" -H "Authorization: Bear
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/parts?page=1&pageSize=20" -H "Authorization: Bearer $viewer_token" \
   | jq -e '.data | length >= 3' >/dev/null
 
+# 装配关系：组件 ASSY-SMOKE 下挂 SUB-SMOKE（未放行），批准关联组件的授权必须被拦
+now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+suffix=$(date +%s)
+mk_part() {
+  curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts" \
+    -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+    -d "{\"code\":\"$1\",\"name\":\"$2\",\"facility\":\"Validation Hangar\",\"owner\":\"Release Desk\",\"category\":\"engine\",\"riskLevel\":\"medium\",\"metricValue\":1,\"metricUnit\":\"unit\",\"effectiveAt\":\"$now\",\"evidence\":\"assembly validation\"}"
+}
+component_part=$(mk_part "ASSY-SMOKE-$suffix" "Assembly component")
+subpart=$(mk_part "SUB-SMOKE-$suffix" "Suspended subpart")
+component_id=$(printf '%s' "$component_part" | jq -er '.data.id')
+subpart_id=$(printf '%s' "$subpart" | jq -er '.data.id')
+subpart_code=$(printf '%s' "$subpart" | jq -er '.data.code')
+
+# 自环必须被挡
+self_loop_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${component_id}/assembly" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"childCode":"'"$(printf '%s' "$component_part" | jq -er '.data.code')"'"}')
+[ "$self_loop_status" = "422" ]
+
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${component_id}/assembly" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "{\"childCode\":\"$subpart_code\"}" | jq -e '.data.allClear == false and ([.data.blocked[].code] | index("'"$subpart_code"'")) != null' >/dev/null
+
+viewer_assembly_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${component_id}/assembly" \
+  -H "Authorization: Bearer $viewer_token" -H 'Content-Type: application/json' -d "{\"childCode\":\"$subpart_code\"}")
+[ "$viewer_assembly_status" = "403" ]
+
 viewer_write_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts" \
   -H "Authorization: Bearer $viewer_token" -H 'Content-Type: application/json' -d '{}')
 [ "$viewer_write_status" = "403" ]
@@ -53,7 +80,7 @@ viewer_write_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://12
 now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 suffix=$(date +%s)
 
-authorization_payload=$(printf '{"code":"AUTH-SMOKE-%s","name":"Validated component release","description":"Dual-control Compose validation","facility":"Validation Hangar","owner":"Release Desk","category":"engine","riskLevel":"high","metricValue":100,"metricUnit":"percent","effectiveAt":"%s","evidence":"inspection IR-SMOKE and certificate CERT-SMOKE","relatedCode":"PART-SMOKE"}' "$suffix" "$now")
+authorization_payload=$(printf '{"code":"AUTH-SMOKE-%s","name":"Validated component release","description":"Dual-control Compose validation","facility":"Validation Hangar","owner":"Release Desk","category":"engine","riskLevel":"high","metricValue":100,"metricUnit":"percent","effectiveAt":"%s","evidence":"inspection IR-SMOKE and certificate CERT-SMOKE","relatedCode":"PART-SMOKE","partId":%s}' "$suffix" "$now" "$component_id")
 authorization=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/authorizations" \
   -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-auth-create' \
   -d "$authorization_payload")
@@ -71,6 +98,25 @@ operator_approval_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http
   -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-auth-operator-denied' \
   -d "{\"status\":\"approved\",\"expectedVersion\":${authorization_review_version},\"reason\":\"operator must not self approve\"}")
 [ "$operator_approval_status" = "403" ]
+
+# 下层子件尚未放行：复核员批准必须返回 assembly_blocked 并列出卡住编号，授权留在 review
+assembly_blocked_body=$(curl -sS -o /tmp/assembly_blocked.json -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/authorizations/${authorization_id}/transition" \
+  -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-auth-assembly-blocked' \
+  -d "{\"status\":\"approved\",\"expectedVersion\":${authorization_review_version},\"reason\":\"subpart not released yet\"}")
+[ "$assembly_blocked_body" = "422" ]
+jq -e '.error == "assembly_blocked" and ([.meta.blocked[].code] | index("'"$subpart_code"'")) != null' /tmp/assembly_blocked.json >/dev/null
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/authorizations/${authorization_id}" -H "Authorization: Bearer $reviewer_token" \
+  | jq -e '.data.status == "review" and .data.version == 2' >/dev/null
+
+# 子件沿 received -> inspection -> hold -> released 全部走完后，核对放行
+sub_v=$(printf '%s' "$subpart" | jq -er '.data.version')
+for target in inspection hold released; do
+  sub_v=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/parts/${subpart_id}/transition" \
+    -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+    -d "{\"status\":\"$target\",\"expectedVersion\":${sub_v},\"reason\":\"advance subpart for release\"}" | jq -er '.data.version')
+done
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/parts/${component_id}/assembly" -H "Authorization: Bearer $reviewer_token" \
+  | jq -e '.data.allClear == true' >/dev/null
 
 authorization_approved=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/authorizations/${authorization_id}/transition" \
   -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb515-auth-approve' \

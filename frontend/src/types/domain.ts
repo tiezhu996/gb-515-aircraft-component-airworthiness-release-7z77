@@ -6,6 +6,7 @@ export interface DomainRecord {
   status: string;
   version: number;
   description: string;
+  partId?: number | null;
   facility: string;
   owner: string;
   category: string;
@@ -23,6 +24,36 @@ export interface DomainRecord {
 	revisions?: VersionRevision[];
 	createdAt: string;
 	updatedAt: string;
+}
+
+export interface BlockedPart {
+	partId: number;
+	code: string;
+	name: string;
+	status: string;
+	reason: string;
+	depth: number;
+}
+
+export interface AssemblyNode {
+	partId: number;
+	code: string;
+	name: string;
+	status: string;
+	depth: number;
+	blocked?: BlockedPart;
+	children: AssemblyNode[];
+}
+
+export interface AssemblyView {
+	partId: number;
+	code: string;
+	name: string;
+	status: string;
+	parents: AssemblyNode[];
+	children: AssemblyNode[];
+	allClear: boolean;
+	blocked: BlockedPart[];
 }
 
 export interface VersionRevision {

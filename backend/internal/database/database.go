@@ -78,6 +78,7 @@ func migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&model.User{}, &model.AuditLog{},
 		&model.AircraftPart{},
+		&model.PartAssembly{},
 		&model.InspectionTask{},
 		&model.CertificateRecord{},
 		&model.CertificateRecordRevision{},
@@ -108,6 +109,10 @@ func Seed(ctx context.Context, db *gorm.DB) error {
 	}
 
 	if err := seedAircraftPart(ctx, db); err != nil {
+		return err
+	}
+
+	if err := seedPartAssembly(ctx, db); err != nil {
 		return err
 	}
 
@@ -150,6 +155,30 @@ func seedAircraftPart(ctx context.Context, db *gorm.DB) error {
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-515-03"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
+}
+
+func seedPartAssembly(ctx context.Context, db *gorm.DB) error {
+	var count int64
+	if err := db.WithContext(ctx).Model(&model.PartAssembly{}).Count(&count).Error; err != nil || count > 0 {
+		return err
+	}
+	var parent, middle, holdPart model.AircraftPart
+	if err := db.WithContext(ctx).Where("code = ?", "AP-001").First(&parent).Error; err != nil {
+		return err
+	}
+	if err := db.WithContext(ctx).Where("code = ?", "AP-002").First(&middle).Error; err != nil {
+		return err
+	}
+	if err := db.WithContext(ctx).Where("code = ?", "AP-003").First(&holdPart).Error; err != nil {
+		return err
+	}
+	// 演示装配树：组件 AP-001 下挂 AP-002，AP-002 下再挂暂停的 AP-003，
+	// 复核员批准挂在 AP-001 上的放行授权时会被逐级核对拦下。
+	links := []model.PartAssembly{
+		{ParentPartID: parent.ID, ChildPartID: middle.ID, CreatedBy: "system-seed", RequestID: "seed-gb-515", CreatedAt: time.Now().UTC()},
+		{ParentPartID: middle.ID, ChildPartID: holdPart.ID, CreatedBy: "system-seed", RequestID: "seed-gb-515", CreatedAt: time.Now().UTC()},
+	}
+	return db.WithContext(ctx).Create(&links).Error
 }
 
 func seedInspectionTask(ctx context.Context, db *gorm.DB) error {

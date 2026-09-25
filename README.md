@@ -34,12 +34,16 @@ docker compose down -v --remove-orphans
 | 业务模块 | 后端实体 | API 前缀 | 状态流 |
 |---|---|---|---|
 | 航空部件 | `AircraftPart` | `/api/parts` | received, inspection, hold, released, retired |
+| 部件装配关系 | `PartAssembly` | `/api/parts/:id/assembly` | 组件 → 子件（多对一） |
 | 检查任务 | `InspectionTask` | `/api/inspections` | planned, running, passed, failed |
 | 证书记录 | `CertificateRecord` | `/api/certificates` | draft, valid, expired, revoked |
 | 放行授权 | `ReleaseAuthorization` | `/api/authorizations` | draft, review, approved, restricted, revoked |
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC，数据库角色、Gin middleware、React 路由守卫和按钮权限一致。
 - 放行必须经过 `draft -> review -> approved/restricted`，提交者与复核者必须是不同账号，operator 无法自批。
+- 部件之间可登记装配关系（一个组件挂多个子件，同一子件只能属于一个组件）；登记时以图遍历拦截自环和任何绕回自己的环。
+- 复核员批准或限制放行前，授权若关联了组件部件，就沿装配关系逐级核对全部后代；只要有暂停（hold）、退役（retired）或尚未放行（released 之外）的部件，授权留在待复核，接口一次性返回所有卡住的部件编号与原因。
+- 部件页可展开装配视图，展示父子清单、层级树和逐级核对结果；删除部件时自动摘除其上下游装配关系。
 - 证书发布同样要求 reviewer/admin，且发布者不能是当前版本的编制人。
 - 证书和授权的每次创建、草稿更新与状态变化都在同一事务写入不可变版本快照和审计日志。
 - 所有状态变化使用乐观锁；复核开始后业务字段锁定，防止覆盖已审证据。

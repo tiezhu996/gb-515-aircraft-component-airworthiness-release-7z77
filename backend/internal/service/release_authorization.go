@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/dto"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/model"
 	"github.com/blueship581/aircraft-component-airworthiness-release/backend/internal/repository"
+	"gorm.io/gorm"
 )
 
 type ReleaseAuthorizationService interface {
@@ -20,15 +22,39 @@ type ReleaseAuthorizationService interface {
 	Transition(context.Context, uint, dto.TransitionRequest, string, string, string) (model.ReleaseAuthorization, error)
 	Delete(context.Context, uint, string, string) error
 	StatusCounts(context.Context) (map[string]int64, error)
+	SetAssemblyReleaseVerifier(AssemblyReleaseVerifier)
+	SetPartChecker(PartExistenceChecker)
+}
+
+// AssemblyReleaseVerifier 在复核员批准组件放行前顺着装配关系逐级核对。
+type AssemblyReleaseVerifier interface {
+	VerifyRelease(ctx context.Context, rootPartID uint) (allClear bool, blocked []BlockedPart, err error)
+}
+
+// PartExistenceChecker 校验放行授权关联的部件确实存在。
+type PartExistenceChecker interface {
+	Get(context.Context, uint) (model.AircraftPart, error)
 }
 
 type releaseAuthorizationService struct {
 	repository repository.ReleaseAuthorizationRepository
 	security   SecurityService
+	verifier   AssemblyReleaseVerifier
+	parts      PartExistenceChecker
 }
 
 func NewReleaseAuthorizationService(repo repository.ReleaseAuthorizationRepository, security SecurityService) ReleaseAuthorizationService {
 	return &releaseAuthorizationService{repository: repo, security: security}
+}
+
+// SetAssemblyReleaseVerifier 注入装配核对依赖，由路由装配阶段调用。
+func (s *releaseAuthorizationService) SetAssemblyReleaseVerifier(verifier AssemblyReleaseVerifier) {
+	s.verifier = verifier
+}
+
+// SetPartChecker 注入部件查询依赖，由路由装配阶段调用。
+func (s *releaseAuthorizationService) SetPartChecker(parts PartExistenceChecker) {
+	s.parts = parts
 }
 
 func (s *releaseAuthorizationService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.ReleaseAuthorization], error) {
@@ -43,11 +69,16 @@ func (s *releaseAuthorizationService) Create(ctx context.Context, input dto.Crea
 	if err := validateReleaseAuthorizationBusinessFields(input.Code, input.Name, input.Facility, input.Owner); err != nil {
 		return model.ReleaseAuthorization{}, err
 	}
+	partID, err := s.resolvePartID(ctx, input.PartID)
+	if err != nil {
+		return model.ReleaseAuthorization{}, err
+	}
 	item := model.ReleaseAuthorization{
 		BaseModel: model.BaseModel{
 			Code: strings.ToUpper(strings.TrimSpace(input.Code)), Name: strings.TrimSpace(input.Name),
 			Status: model.ReleaseAuthorizationInitialStatus, Version: 1, Description: strings.TrimSpace(input.Description),
 		},
+		PartID: partID,
 		Facility: strings.TrimSpace(input.Facility), Owner: strings.TrimSpace(input.Owner),
 		Category: strings.TrimSpace(input.Category), RiskLevel: input.RiskLevel,
 		MetricValue: input.MetricValue, MetricUnit: strings.TrimSpace(input.MetricUnit),
@@ -58,6 +89,23 @@ func (s *releaseAuthorizationService) Create(ctx context.Context, input dto.Crea
 		return model.ReleaseAuthorization{}, fmt.Errorf("create 放行授权: %w", err)
 	}
 	return s.repository.Get(ctx, item.ID)
+}
+
+// resolvePartID 校验授权显式关联的部件存在；未关联时返回 nil。
+func (s *releaseAuthorizationService) resolvePartID(ctx context.Context, partID *uint) (*uint, error) {
+	if partID == nil || *partID == 0 {
+		return nil, nil
+	}
+	if s.parts == nil {
+		return partID, nil
+	}
+	if _, err := s.parts.Get(ctx, *partID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: partId 对应的部件不存在", ErrInvalidInput)
+		}
+		return nil, err
+	}
+	return partID, nil
 }
 
 func (s *releaseAuthorizationService) Update(ctx context.Context, id uint, input dto.UpdateReleaseAuthorization, actor, requestID string) (model.ReleaseAuthorization, error) {
@@ -71,6 +119,11 @@ func (s *releaseAuthorizationService) Update(ctx context.Context, id uint, input
 	if err := validateReleaseAuthorizationBusinessFields(current.Code, input.Name, input.Facility, input.Owner); err != nil {
 		return model.ReleaseAuthorization{}, err
 	}
+	partID, err := s.resolvePartID(ctx, input.PartID)
+	if err != nil {
+		return model.ReleaseAuthorization{}, err
+	}
+	current.PartID = partID
 	current.Name = strings.TrimSpace(input.Name)
 	current.Description = strings.TrimSpace(input.Description)
 	current.Facility = strings.TrimSpace(input.Facility)
@@ -113,6 +166,17 @@ func (s *releaseAuthorizationService) Transition(ctx context.Context, id uint, i
 		}
 		if current.SubmittedBy != "" && actor == current.SubmittedBy {
 			return model.ReleaseAuthorization{}, ErrSeparationOfDuty
+		}
+		// 批准或限制放行组件前，顺着装配关系逐级核对：下层只要有暂停、退役或
+		// 尚未放行的部件，授权就留在待复核（review），并把卡住的编号带回去。
+		if (target == "approved" || target == "restricted") && s.verifier != nil && current.PartID != nil {
+			allClear, blocked, verifyErr := s.verifier.VerifyRelease(ctx, *current.PartID)
+			if verifyErr != nil {
+				return model.ReleaseAuthorization{}, verifyErr
+			}
+			if !allClear {
+				return model.ReleaseAuthorization{}, &AssemblyBlockedError{Blocked: blocked}
+			}
 		}
 		current.ReviewedBy = actor
 		current.ReviewReason = strings.TrimSpace(input.Reason)

@@ -7,6 +7,7 @@ import "time"
 // changes naturally span persistence, service and UI layers.
 type ReleaseAuthorization struct {
 	BaseModel
+	PartID       *uint                          `json:"partId,omitempty" gorm:"index"`
 	Facility     string                         `json:"facility" gorm:"size:120;index"`
 	Owner        string                         `json:"owner" gorm:"size:120;index"`
 	Category     string                         `json:"category" gorm:"size:80;index"`

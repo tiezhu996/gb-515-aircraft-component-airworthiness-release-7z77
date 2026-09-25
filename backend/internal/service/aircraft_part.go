@@ -20,15 +20,27 @@ type AircraftPartService interface {
 	Transition(context.Context, uint, dto.TransitionRequest, string, string) (model.AircraftPart, error)
 	Delete(context.Context, uint, string, string) error
 	StatusCounts(context.Context) (map[string]int64, error)
+	SetAssemblyCleaner(AssemblyCleaner)
+}
+
+// AssemblyCleaner 抽象装配关系清理，避免部件服务直接依赖装配仓储细节。
+type AssemblyCleaner interface {
+	DeleteByPart(context.Context, uint) error
 }
 
 type aircraftPartService struct {
 	repository repository.AircraftPartRepository
+	assemblies AssemblyCleaner
 	security   SecurityService
 }
 
 func NewAircraftPartService(repo repository.AircraftPartRepository, security SecurityService) AircraftPartService {
 	return &aircraftPartService{repository: repo, security: security}
+}
+
+// SetAssemblyCleaner 装配删除部件时的关系清理，由路由装配阶段注入。
+func (s *aircraftPartService) SetAssemblyCleaner(cleaner AssemblyCleaner) {
+	s.assemblies = cleaner
 }
 
 func (s *aircraftPartService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.AircraftPart], error) {
@@ -118,6 +130,12 @@ func (s *aircraftPartService) Delete(ctx context.Context, id uint, actor, reques
 	}
 	if err := s.repository.Delete(ctx, id); err != nil {
 		return err
+	}
+	// 部件删除后其上下游装配关系必须一并摘除，避免核对落到不存在的部件。
+	if s.assemblies != nil {
+		if err := s.assemblies.DeleteByPart(ctx, id); err != nil {
+			return err
+		}
 	}
 	return s.security.Audit(ctx, actor, requestID, "delete", "AircraftPart", id, current.Status, "deleted", "soft deleted 航空部件")
 }

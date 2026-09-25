@@ -59,3 +59,31 @@ td small { display: block; color: #7d8d97; margin-top: 4px; }
 @media (max-width: 1100px) { .evidence-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } aside { position: static; height: auto; } nav { grid-template-columns: repeat(2, 1fr); } .user-panel { display: none; } .metrics { grid-template-columns: 1fr; } .workspace { padding: 18px; } .page-header { flex-direction: column; } .audit-list article { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .login-page { padding: 0; align-items: stretch; }.login-panel { padding: 26px 20px; box-shadow: none; }.account-switcher { grid-template-columns: repeat(2, 1fr); }.evidence-strip { grid-template-columns: 1fr; }.certificate-section > header { align-items: flex-start; flex-direction: column; }.toolbar { flex-wrap: wrap; }.toolbar input { min-width: 100%; }.topbar { padding: 0 18px; } table { min-width: 820px; } th, td { white-space: nowrap; } td:nth-child(2) { white-space: normal; min-width: 180px; } }
+
+/* 装配清单与逐级核对 */
+.row-detail-button { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: #176c55; text-decoration: underline dotted; }
+.row-detail-button:hover { color: #0e5542; }
+tr.row-selected td { background: #f0faf6; }
+.detail-drawer { margin-top: 18px; }
+.detail-drawer__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #173f38; color: #dcefe8; font-weight: 650; }
+.assembly-panel { background: white; border: 1px solid #dbe4e8; padding: 16px; }
+.assembly-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.assembly-header h2 { margin: 0 0 4px; font-size: 16px; }
+.assembly-verdict { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 3px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.assembly-verdict--ok { color: #176c55; background: #dff3ec; }
+.assembly-verdict--blocked { color: #9d2c37; background: #fde4e6; }
+.assembly-parent-hint { margin: 0 0 12px; font-size: 13px; color: #506572; }
+.assembly-parent-code { display: inline-block; margin: 0 4px; padding: 1px 7px; background: #e9eff2; color: #285c77; font-weight: 700; border-radius: 3px; }
+.assembly-blocked-box { margin-bottom: 12px; padding: 12px 14px; color: #8a2530; background: #fde8ea; border-left: 4px solid #c84855; }
+.assembly-blocked-box ul { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+.assembly-row--blocked td { background: #fdf5f6; }
+.assembly-reason { font-size: 12px; font-weight: 650; }
+.assembly-reason--ok { color: #176c55; }
+.assembly-reason--warning { color: #8a5a08; }
+.assembly-reason--danger { color: #9d2c37; }
+.assembly-reason--neutral { color: #506572; }
+.assembly-register { display: flex; gap: 10px; margin-top: 14px; }
+.assembly-register input { flex: 1; max-width: 360px; padding: 9px 12px; border: 1px solid #bdcbd3; }
+.create-extra { display: grid; gap: 6px; margin-top: 12px; }
+.create-extra span { font-size: 12px; color: #506572; }
+.create-extra select { padding: 9px 10px; border: 1px solid #bdcbd3; font: inherit; }
